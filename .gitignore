@@ -1,0 +1,130 @@
+# .gitignore
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Build artifacts
+main
+heic-photo-processor
+*.bin
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Environment variables and config
+.env
+.env.local
+.env.*.local
+config.local.yaml
+config.local.yml
+
+# Log files
+*.log
+logs/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Upload directories
+uploads/
+temp/
+tmp/
+
+# Docker volumes
+postgres_data/
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Go module cache (local development)
+go.sum.backup
+
+# Air live reload (if using)
+.air.toml
+tmp/
+
+# Certificates and keys
+*.pem
+*.key
+*.crt
+*.p12
+
+# Local development files
+docker-compose.override.yml
+.env.development
+.env.production
+
+# Backup files
+*.backup
+*.bak
+
+# Runtime data
+pids/
+*.pid
+*.seed
+
+# Cache directories
+.cache/
+.tmp/
+
+# Generated files
+*.pb.go
+*_generated.go
+
+# Documentation generated files
+docs/build/
+
+# Local Kubernetes files
+*.kubeconfig
+k8s-local/
+
+# Profiling files
+*.prof
+*.pprof
+
+# Memory dumps
+*.hprof
+core.*
+
+# Temporary directories for testing
+test_uploads/
+test_data/
+
+# Local database dumps
+*.sql.backup
+dump.sql
