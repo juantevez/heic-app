@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"heic-photo-processor/internal/domain/entities"
+	"github.com/juantevez/heic-app/internal/domain/entities"
 
 	"github.com/dsoprea/go-exif/v3"
 	exifcommon "github.com/dsoprea/go-exif/v3/common"

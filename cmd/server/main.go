@@ -13,8 +13,9 @@ import (
 	httpAdapter "github.com/juantevez/heic-app/internal/adapters/http"
 	"github.com/juantevez/heic-app/internal/adapters/http/handlers"
 	"github.com/juantevez/heic-app/internal/adapters/repositories"
-	"github.com/juantevez/heic-app/internal/adapters/services"
+	adapterServices "github.com/juantevez/heic-app/internal/adapters/services"
 	"github.com/juantevez/heic-app/internal/config"
+	domainServices "github.com/juantevez/heic-app/internal/domain/services"
 )
 
 func main() {
@@ -39,8 +40,8 @@ func main() {
 	photoRepo := repositories.NewPostgresPhotoRepository(db)
 
 	// Initialize services
-	exifExtractor := services.NewExifExtractorService()
-	photoService := services.NewPhotoService(photoRepo, exifExtractor)
+	exifExtractor := adapterServices.NewExifExtractorService()
+	photoService := domainServices.NewPhotoService(photoRepo, exifExtractor)
 
 	// Initialize handlers
 	photoHandler := handlers.NewPhotoHandler(photoService)
@@ -115,8 +116,8 @@ func NewApplication() (*Application, error) {
 
 	// Initialize dependencies
 	photoRepo := repositories.NewPostgresPhotoRepository(db)
-	exifExtractor := services.NewExifExtractorService()
-	photoService := services.NewPhotoService(photoRepo, exifExtractor)
+	exifExtractor := adapterServices.NewExifExtractorService()
+	photoService := domainServices.NewPhotoService(photoRepo, exifExtractor)
 	photoHandler := handlers.NewPhotoHandler(photoService)
 
 	// Setup router
