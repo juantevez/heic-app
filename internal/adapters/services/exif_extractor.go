@@ -1,4 +1,3 @@
-// internal/adapters/services/exif_extractor.go
 package services
 
 import (
@@ -110,97 +109,127 @@ func (e *ExifExtractorServiceImpl) parseExifData(rawExif []byte, photoExif *enti
 		// Extraer información básica de cámara del Root IFD
 		e.extractCameraInfo(rootIfd, photoExif)
 
-		// Buscar y extraer GPS info
-		e.extractGPSInfo(rootIfd, photoExif)
-
-		// Buscar EXIF SubIFD para información adicional
-		e.extractExifSubIfdInfo(rootIfd, photoExif)
+		// Extraer datos GPS y EXIF directamente de las entradas
+		e.extractAllTagsFromIfd(rootIfd, photoExif)
 	}
 
 	return nil
 }
 
-func (e *ExifExtractorServiceImpl) extractGPSInfo(rootIfd *exif.Ifd, photoExif *entities.PhotoExif) {
-	// Buscar GPS IFD entre los children del root IFD
-	for _, childIfd := range rootIfd.Children {
-		// Intentar extraer GPS info directamente
-		if lat, lon, err := childIfd.GpsInfo(); err == nil {
-			photoExif.Latitude = &lat
-			photoExif.Longitude = &lon
-			return
-		}
-	}
-
-	// Si no funciona el método directo, buscar tags GPS manualmente
-	e.extractGPSFromTags(rootIfd, photoExif)
-}
-
-func (e *ExifExtractorServiceImpl) extractGPSFromTags(ifd *exif.Ifd, photoExif *entities.PhotoExif) {
+func (e *ExifExtractorServiceImpl) extractAllTagsFromIfd(ifd *exif.Ifd, photoExif *entities.PhotoExif) {
 	entries := ifd.Entries()
-	gpsData := make(map[uint16]interface{})
 
-	// Buscar tags GPS (normalmente están en el rango 0x0000-0x001F)
 	for _, entry := range entries {
 		tagId := entry.TagId()
+		value, err := entry.Value()
+		if err != nil {
+			continue
+		}
 
-		// Tags GPS conocidos
 		switch tagId {
-		case 0x0001, 0x0002, 0x0003, 0x0004: // GPS Lat/Lon Ref and values
-			if value, err := entry.Value(); err == nil {
-				gpsData[tagId] = value
+		// GPS Tags
+		case 0x0001: // GPSLatitudeRef
+			if str, ok := value.(string); ok {
+				e.setGPSLatitudeRef(str, photoExif)
+			}
+		case 0x0002: // GPSLatitude
+			if lat := e.parseGPSCoordinateValue(value); lat != 0 {
+				e.setGPSLatitude(lat, photoExif)
+			}
+		case 0x0003: // GPSLongitudeRef
+			if str, ok := value.(string); ok {
+				e.setGPSLongitudeRef(str, photoExif)
+			}
+		case 0x0004: // GPSLongitude
+			if lon := e.parseGPSCoordinateValue(value); lon != 0 {
+				e.setGPSLongitude(lon, photoExif)
+			}
+
+		// Camera Tags
+		case 0x010F: // Make
+			if maker, ok := value.(string); ok {
+				cleaned := strings.TrimSpace(strings.Trim(maker, "\x00"))
+				if cleaned != "" {
+					photoExif.CameraMaker = &cleaned
+				}
+			}
+		case 0x0110: // Model
+			if model, ok := value.(string); ok {
+				cleaned := strings.TrimSpace(strings.Trim(model, "\x00"))
+				if cleaned != "" {
+					photoExif.CameraModel = &cleaned
+				}
+			}
+		case 0x0132: // DateTime
+			if datetime, ok := value.(string); ok {
+				cleaned := strings.TrimSpace(strings.Trim(datetime, "\x00"))
+				if cleaned != "" {
+					photoExif.DateTime = &cleaned
+				}
+			}
+		case 0x9003: // DateTimeOriginal (preferred)
+			if datetime, ok := value.(string); ok {
+				cleaned := strings.TrimSpace(strings.Trim(datetime, "\x00"))
+				if cleaned != "" {
+					photoExif.DateTime = &cleaned // Override previous DateTime
+				}
+			}
+		case 0x9004: // DateTimeDigitized
+			if datetime, ok := value.(string); ok && photoExif.DateTime == nil {
+				cleaned := strings.TrimSpace(strings.Trim(datetime, "\x00"))
+				if cleaned != "" {
+					photoExif.DateTime = &cleaned
+				}
 			}
 		}
 	}
+}
 
-	// Si encontramos datos GPS, parsearlos
-	if len(gpsData) > 0 {
-		e.parseGPSCoordinates(gpsData, photoExif)
+// GPS helper variables para almacenar referencias temporalmente
+var gpsLatRef, gpsLonRef string
+var gpsLat, gpsLon float64
+
+func (e *ExifExtractorServiceImpl) setGPSLatitudeRef(ref string, photoExif *entities.PhotoExif) {
+	gpsLatRef = strings.TrimSpace(ref)
+	e.updateGPSLatitude(photoExif)
+}
+
+func (e *ExifExtractorServiceImpl) setGPSLatitude(lat float64, photoExif *entities.PhotoExif) {
+	gpsLat = lat
+	e.updateGPSLatitude(photoExif)
+}
+
+func (e *ExifExtractorServiceImpl) updateGPSLatitude(photoExif *entities.PhotoExif) {
+	if gpsLat != 0 {
+		finalLat := gpsLat
+		if gpsLatRef == "S" {
+			finalLat = -gpsLat
+		}
+		photoExif.Latitude = &finalLat
 	}
 }
 
-func (e *ExifExtractorServiceImpl) parseGPSCoordinates(gpsData map[uint16]interface{}, photoExif *entities.PhotoExif) {
-	var latRef, lonRef string
-	var lat, lon float64
+func (e *ExifExtractorServiceImpl) setGPSLongitudeRef(ref string, photoExif *entities.PhotoExif) {
+	gpsLonRef = strings.TrimSpace(ref)
+	e.updateGPSLongitude(photoExif)
+}
 
-	// GPS Latitude Reference (N/S)
-	if val, ok := gpsData[0x0001]; ok {
-		if str, ok := val.(string); ok {
-			latRef = strings.TrimSpace(str)
-		}
-	}
+func (e *ExifExtractorServiceImpl) setGPSLongitude(lon float64, photoExif *entities.PhotoExif) {
+	gpsLon = lon
+	e.updateGPSLongitude(photoExif)
+}
 
-	// GPS Latitude
-	if val, ok := gpsData[0x0002]; ok {
-		lat = e.parseGPSCoordinate(val)
-		if latRef == "S" {
-			lat = -lat
+func (e *ExifExtractorServiceImpl) updateGPSLongitude(photoExif *entities.PhotoExif) {
+	if gpsLon != 0 {
+		finalLon := gpsLon
+		if gpsLonRef == "W" {
+			finalLon = -gpsLon
 		}
-		if lat != 0 {
-			photoExif.Latitude = &lat
-		}
-	}
-
-	// GPS Longitude Reference (E/W)
-	if val, ok := gpsData[0x0003]; ok {
-		if str, ok := val.(string); ok {
-			lonRef = strings.TrimSpace(str)
-		}
-	}
-
-	// GPS Longitude
-	if val, ok := gpsData[0x0004]; ok {
-		lon = e.parseGPSCoordinate(val)
-		if lonRef == "W" {
-			lon = -lon
-		}
-		if lon != 0 {
-			photoExif.Longitude = &lon
-		}
+		photoExif.Longitude = &finalLon
 	}
 }
 
-func (e *ExifExtractorServiceImpl) parseGPSCoordinate(value interface{}) float64 {
-	// Intentar diferentes tipos de valores GPS
+func (e *ExifExtractorServiceImpl) parseGPSCoordinateValue(value interface{}) float64 {
 	switch v := value.(type) {
 	case []exifcommon.Rational:
 		if len(v) >= 3 {
@@ -214,7 +243,6 @@ func (e *ExifExtractorServiceImpl) parseGPSCoordinate(value interface{}) float64
 			return v[0] + (v[1] / 60.0) + (v[2] / 3600.0)
 		}
 	case string:
-		// Intentar parsear string con formato "40/1,26/1,4630/100"
 		if coord, err := e.parseGPSString(v); err == nil {
 			return coord
 		}
@@ -260,22 +288,6 @@ func (e *ExifExtractorServiceImpl) parseGPSString(coordStr string) (float64, err
 	return coord, nil
 }
 
-func (e *ExifExtractorServiceImpl) extractExifSubIfdInfo(rootIfd *exif.Ifd, photoExif *entities.PhotoExif) {
-	// Buscar EXIF SubIFD (tag 0x8769) para información adicional
-	entries := rootIfd.Entries()
-
-	for _, entry := range entries {
-		if entry.TagId() == 0x8769 { // EXIF SubIFD pointer
-			// Buscar entre los children IFDs
-			children := rootIfd.Children()
-			for _, childIfd := range children {
-				e.extractExifInfo(childIfd, photoExif)
-			}
-			break
-		}
-	}
-}
-
 func (e *ExifExtractorServiceImpl) extractCameraInfo(ifd *exif.Ifd, photoExif *entities.PhotoExif) {
 	entries := ifd.Entries()
 
@@ -301,34 +313,6 @@ func (e *ExifExtractorServiceImpl) extractCameraInfo(ifd *exif.Ifd, photoExif *e
 			}
 		case 0x0132: // DateTime
 			if value, err := entry.Value(); err == nil {
-				if datetime, ok := value.(string); ok {
-					cleaned := strings.TrimSpace(strings.Trim(datetime, "\x00"))
-					if cleaned != "" {
-						photoExif.DateTime = &cleaned
-					}
-				}
-			}
-		}
-	}
-}
-
-func (e *ExifExtractorServiceImpl) extractExifInfo(ifd *exif.Ifd, photoExif *entities.PhotoExif) {
-	entries := ifd.Entries()
-
-	for _, entry := range entries {
-		switch entry.TagId() {
-		case 0x9003: // DateTimeOriginal
-			if value, err := entry.Value(); err == nil {
-				if datetime, ok := value.(string); ok {
-					cleaned := strings.TrimSpace(strings.Trim(datetime, "\x00"))
-					if cleaned != "" {
-						// Preferir DateTimeOriginal sobre DateTime
-						photoExif.DateTime = &cleaned
-					}
-				}
-			}
-		case 0x9004: // DateTimeDigitized
-			if value, err := entry.Value(); err == nil && photoExif.DateTime == nil {
 				if datetime, ok := value.(string); ok {
 					cleaned := strings.TrimSpace(strings.Trim(datetime, "\x00"))
 					if cleaned != "" {
