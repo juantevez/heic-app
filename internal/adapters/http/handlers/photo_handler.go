@@ -160,7 +160,7 @@ func (h *PhotoHandler) DownloadPhoto(w http.ResponseWriter, r *http.Request) {
 func (h *PhotoHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"status":    "healthy",
-		"service":   "heic-photo-processor",
+		"service":   "github.com/juantevez/heic-app",
 		"timestamp": "2025-01-01T00:00:00Z",
 	}
 	h.sendJSONResponse(w, http.StatusOK, response)

@@ -40,7 +40,7 @@ internal/
 1. **Clonar el repositorio**
 ```bash
 git clone <repository-url>
-cd heic-photo-processor
+cd github.com/juantevez/heic-app
 ```
 
 2. **Configurar variables de entorno**

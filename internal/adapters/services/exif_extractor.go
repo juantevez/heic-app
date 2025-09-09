@@ -1,3 +1,4 @@
+// internal/adapters/services/exif_extractor.go
 package services
 
 import (
@@ -51,12 +52,9 @@ func (e *ExifExtractorServiceImpl) ExtractExif(fileData []byte, fileName string)
 
 func (e *ExifExtractorServiceImpl) extractExifFromHEIC(fileData []byte) ([]byte, error) {
 	// Buscar directamente el segmento EXIF en el archivo HEIC
-	// Los archivos HEIC pueden contener datos EXIF embebidos
-
-	// Método 1: Usar go-exif para buscar y extraer EXIF
 	rawExif, err := exif.SearchAndExtractExif(fileData)
 	if err != nil {
-		// Método 2: Buscar manualmente el marcador EXIF
+		// Método alternativo: buscar manualmente el marcador EXIF
 		return e.findExifInHEIC(fileData)
 	}
 
@@ -65,9 +63,6 @@ func (e *ExifExtractorServiceImpl) extractExifFromHEIC(fileData []byte) ([]byte,
 
 func (e *ExifExtractorServiceImpl) findExifInHEIC(fileData []byte) ([]byte, error) {
 	// Buscar el marcador EXIF en el archivo HEIC
-	// Los archivos HEIC/HEIF pueden tener EXIF embebido en diferentes ubicaciones
-
-	// Buscar patrones comunes de EXIF
 	exifMarkers := [][]byte{
 		{0x45, 0x78, 0x69, 0x66}, // "Exif"
 		{0xFF, 0xE1},             // APP1 marker
@@ -110,25 +105,174 @@ func (e *ExifExtractorServiceImpl) parseExifData(rawExif []byte, photoExif *enti
 		return err
 	}
 
-	// Extraer coordenadas GPS
-	if gpsIfd, err := index.RootIfd.ChildWithIfdPath(exifcommon.IfdPathStandardGps); err == nil {
-		if lat, lon, err := gpsIfd.GpsInfo(); err == nil {
-			photoExif.Latitude = &lat
-			photoExif.Longitude = &lon
-		}
-	}
+	// Extraer información del Root IFD
+	if rootIfd := index.RootIfd; rootIfd != nil {
+		// Extraer información básica de cámara del Root IFD
+		e.extractCameraInfo(rootIfd, photoExif)
 
-	// Extraer información de cámara y datetime desde IFD0
-	if ifd0, err := index.RootIfd.ChildWithIfdPath(exifcommon.IfdPathStandardIfd0); err == nil {
-		e.extractCameraInfo(ifd0, photoExif)
-	}
+		// Buscar y extraer GPS info
+		e.extractGPSInfo(rootIfd, photoExif)
 
-	// Extraer información adicional desde EXIF IFD
-	if exifIfd, err := index.RootIfd.ChildWithIfdPath(exifcommon.IfdPathStandardExif); err == nil {
-		e.extractExifInfo(exifIfd, photoExif)
+		// Buscar EXIF SubIFD para información adicional
+		e.extractExifSubIfdInfo(rootIfd, photoExif)
 	}
 
 	return nil
+}
+
+func (e *ExifExtractorServiceImpl) extractGPSInfo(rootIfd *exif.Ifd, photoExif *entities.PhotoExif) {
+	// Buscar GPS IFD entre los children del root IFD
+	for _, childIfd := range rootIfd.Children {
+		// Intentar extraer GPS info directamente
+		if lat, lon, err := childIfd.GpsInfo(); err == nil {
+			photoExif.Latitude = &lat
+			photoExif.Longitude = &lon
+			return
+		}
+	}
+
+	// Si no funciona el método directo, buscar tags GPS manualmente
+	e.extractGPSFromTags(rootIfd, photoExif)
+}
+
+func (e *ExifExtractorServiceImpl) extractGPSFromTags(ifd *exif.Ifd, photoExif *entities.PhotoExif) {
+	entries := ifd.Entries()
+	gpsData := make(map[uint16]interface{})
+
+	// Buscar tags GPS (normalmente están en el rango 0x0000-0x001F)
+	for _, entry := range entries {
+		tagId := entry.TagId()
+
+		// Tags GPS conocidos
+		switch tagId {
+		case 0x0001, 0x0002, 0x0003, 0x0004: // GPS Lat/Lon Ref and values
+			if value, err := entry.Value(); err == nil {
+				gpsData[tagId] = value
+			}
+		}
+	}
+
+	// Si encontramos datos GPS, parsearlos
+	if len(gpsData) > 0 {
+		e.parseGPSCoordinates(gpsData, photoExif)
+	}
+}
+
+func (e *ExifExtractorServiceImpl) parseGPSCoordinates(gpsData map[uint16]interface{}, photoExif *entities.PhotoExif) {
+	var latRef, lonRef string
+	var lat, lon float64
+
+	// GPS Latitude Reference (N/S)
+	if val, ok := gpsData[0x0001]; ok {
+		if str, ok := val.(string); ok {
+			latRef = strings.TrimSpace(str)
+		}
+	}
+
+	// GPS Latitude
+	if val, ok := gpsData[0x0002]; ok {
+		lat = e.parseGPSCoordinate(val)
+		if latRef == "S" {
+			lat = -lat
+		}
+		if lat != 0 {
+			photoExif.Latitude = &lat
+		}
+	}
+
+	// GPS Longitude Reference (E/W)
+	if val, ok := gpsData[0x0003]; ok {
+		if str, ok := val.(string); ok {
+			lonRef = strings.TrimSpace(str)
+		}
+	}
+
+	// GPS Longitude
+	if val, ok := gpsData[0x0004]; ok {
+		lon = e.parseGPSCoordinate(val)
+		if lonRef == "W" {
+			lon = -lon
+		}
+		if lon != 0 {
+			photoExif.Longitude = &lon
+		}
+	}
+}
+
+func (e *ExifExtractorServiceImpl) parseGPSCoordinate(value interface{}) float64 {
+	// Intentar diferentes tipos de valores GPS
+	switch v := value.(type) {
+	case []exifcommon.Rational:
+		if len(v) >= 3 {
+			deg := float64(v[0].Numerator) / float64(v[0].Denominator)
+			min := float64(v[1].Numerator) / float64(v[1].Denominator)
+			sec := float64(v[2].Numerator) / float64(v[2].Denominator)
+			return deg + (min / 60.0) + (sec / 3600.0)
+		}
+	case []float64:
+		if len(v) >= 3 {
+			return v[0] + (v[1] / 60.0) + (v[2] / 3600.0)
+		}
+	case string:
+		// Intentar parsear string con formato "40/1,26/1,4630/100"
+		if coord, err := e.parseGPSString(v); err == nil {
+			return coord
+		}
+	}
+	return 0
+}
+
+func (e *ExifExtractorServiceImpl) parseGPSString(coordStr string) (float64, error) {
+	parts := strings.Split(coordStr, ",")
+	if len(parts) != 3 {
+		return 0, fmt.Errorf("invalid GPS coordinate format")
+	}
+
+	var coord float64
+	for i, part := range parts {
+		fraction := strings.Split(strings.TrimSpace(part), "/")
+		if len(fraction) != 2 {
+			continue
+		}
+
+		numerator, err := strconv.ParseFloat(fraction[0], 64)
+		if err != nil {
+			continue
+		}
+
+		denominator, err := strconv.ParseFloat(fraction[1], 64)
+		if err != nil || denominator == 0 {
+			continue
+		}
+
+		value := numerator / denominator
+
+		switch i {
+		case 0: // degrees
+			coord += value
+		case 1: // minutes
+			coord += value / 60
+		case 2: // seconds
+			coord += value / 3600
+		}
+	}
+
+	return coord, nil
+}
+
+func (e *ExifExtractorServiceImpl) extractExifSubIfdInfo(rootIfd *exif.Ifd, photoExif *entities.PhotoExif) {
+	// Buscar EXIF SubIFD (tag 0x8769) para información adicional
+	entries := rootIfd.Entries()
+
+	for _, entry := range entries {
+		if entry.TagId() == 0x8769 { // EXIF SubIFD pointer
+			// Buscar entre los children IFDs
+			for _, childIfd := range rootIfd.Children {
+				e.extractExifInfo(childIfd, photoExif)
+			}
+			break
+		}
+	}
 }
 
 func (e *ExifExtractorServiceImpl) extractCameraInfo(ifd *exif.Ifd, photoExif *entities.PhotoExif) {
@@ -201,7 +345,6 @@ func (e *ExifExtractorServiceImpl) isValidHEICFile(fileData []byte) bool {
 	}
 
 	// Verificar signature HEIC/HEIF
-	// Los archivos HEIC comienzan con un box 'ftyp'
 	if fileData[4] == 'f' && fileData[5] == 't' &&
 		fileData[6] == 'y' && fileData[7] == 'p' {
 
@@ -223,49 +366,4 @@ func (e *ExifExtractorServiceImpl) isValidHEICFile(fileData []byte) bool {
 	}
 
 	return false
-}
-
-// Helper function para parsear coordenadas GPS (si se necesita implementación manual)
-func (e *ExifExtractorServiceImpl) parseGPSCoordinate(coordStr string, ref string) (float64, error) {
-	// Parse coordinates como "40/1,26/1,4630/100"
-	parts := strings.Split(coordStr, ",")
-	if len(parts) != 3 {
-		return 0, fmt.Errorf("invalid GPS coordinate format")
-	}
-
-	var coord float64
-	for i, part := range parts {
-		fraction := strings.Split(part, "/")
-		if len(fraction) != 2 {
-			continue
-		}
-
-		numerator, err := strconv.ParseFloat(fraction[0], 64)
-		if err != nil {
-			continue
-		}
-
-		denominator, err := strconv.ParseFloat(fraction[1], 64)
-		if err != nil || denominator == 0 {
-			continue
-		}
-
-		value := numerator / denominator
-
-		switch i {
-		case 0: // degrees
-			coord += value
-		case 1: // minutes
-			coord += value / 60
-		case 2: // seconds
-			coord += value / 3600
-		}
-	}
-
-	// Aplicar referencia de hemisferio
-	if ref == "S" || ref == "W" {
-		coord = -coord
-	}
-
-	return coord, nil
 }

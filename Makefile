@@ -17,7 +17,7 @@ help:
 # Build the application
 build:
 	@echo "Building HEIC Photo Processor..."
-	CGO_ENABLED=1 go build -o bin/heic-photo-processor cmd/server/main.go
+	CGO_ENABLED=1 go build -o bin/github.com/juantevez/heic-app cmd/server/main.go
 
 # Run the application locally
 run:
@@ -50,7 +50,7 @@ lint:
 # Docker commands
 docker-build:
 	@echo "Building Docker image..."
-	docker build -t heic-photo-processor .
+	docker build -t github.com/juantevez/heic-app .
 
 docker-run:
 	@echo "Starting services with Docker Compose..."

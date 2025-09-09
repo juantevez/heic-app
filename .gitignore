@@ -24,7 +24,7 @@ go.work.sum
 
 # Build artifacts
 main
-heic-photo-processor
+github.com/juantevez/heic-app
 *.bin
 
 # IDE and editor files
