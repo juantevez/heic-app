@@ -1,4 +1,3 @@
-// internal/domain/entities/photo.go
 package entities
 
 import (
@@ -9,8 +8,8 @@ import (
 type PhotoExif struct {
 	ID          string    `json:"id"`
 	FileName    string    `json:"file_name"`
-	Latitude    *float64  `json:"latitude,omitempty"`
-	Longitude   *float64  `json:"longitude,omitempty"`
+	Latitude    *float64  `json:"latitude"`  // Removido omitempty
+	Longitude   *float64  `json:"longitude"` // Removido omitempty
 	DateTime    *string   `json:"date_time,omitempty"`
 	CameraModel *string   `json:"camera_model,omitempty"`
 	CameraMaker *string   `json:"camera_maker,omitempty"`

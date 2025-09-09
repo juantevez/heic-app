@@ -47,9 +47,9 @@ func LoadConfig() (*Config, error) {
 		Database: DatabaseConfig{
 			Host:     getEnvOrDefault("DB_HOST", "localhost"),
 			Port:     getEnvOrDefault("DB_PORT", "5432"),
-			User:     getEnvOrDefault("DB_USER", "postgres"),
-			Password: getEnvOrDefault("DB_PASSWORD", ""),
-			DBName:   getEnvOrDefault("DB_NAME", "photo_db"),
+			User:     getEnvOrDefault("DB_USER", "juant"),
+			Password: getEnvOrDefault("DB_PASSWORD", "loki2019"),
+			DBName:   getEnvOrDefault("DB_NAME", "safebike"),
 			SSLMode:  getEnvOrDefault("DB_SSLMODE", "disable"),
 		},
 	}

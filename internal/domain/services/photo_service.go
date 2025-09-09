@@ -24,10 +24,33 @@ func NewPhotoService(photoRepo ports.PhotoRepository, exifExtractor ports.ExifEx
 }
 
 func (s *PhotoServiceImpl) ProcessPhoto(ctx context.Context, req entities.UploadRequest) (*entities.PhotoResponse, error) {
+	fmt.Printf("=== Processing Photo: %s ===\n", req.FileName)
+
 	// Extract EXIF data
 	exifData, err := s.exifExtractor.ExtractExif(req.FileData, req.FileName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract EXIF data: %w", err)
+	}
+
+	fmt.Printf("EXIF Data extracted:\n")
+	fmt.Printf("- ID: %s\n", exifData.ID)
+	fmt.Printf("- FileName: %s\n", exifData.FileName)
+	fmt.Printf("- Latitude: %v\n", exifData.Latitude)
+	fmt.Printf("- Longitude: %v\n", exifData.Longitude)
+	fmt.Printf("- DateTime: %v\n", exifData.DateTime)
+	fmt.Printf("- CameraModel: %v\n", exifData.CameraModel)
+	fmt.Printf("- CameraMaker: %v\n", exifData.CameraMaker)
+
+	if exifData.Latitude != nil {
+		fmt.Printf("- Latitude Value: %f\n", *exifData.Latitude)
+	} else {
+		fmt.Printf("- Latitude is NIL\n")
+	}
+
+	if exifData.Longitude != nil {
+		fmt.Printf("- Longitude Value: %f\n", *exifData.Longitude)
+	} else {
+		fmt.Printf("- Longitude is NIL\n")
 	}
 
 	exifData.CreatedAt = time.Now()
@@ -43,11 +66,13 @@ func (s *PhotoServiceImpl) ProcessPhoto(ctx context.Context, req entities.Upload
 	}
 
 	// Save EXIF data first
+	fmt.Printf("Saving EXIF data to database...\n")
 	if err := s.photoRepo.SavePhotoExif(ctx, exifData); err != nil {
 		return nil, fmt.Errorf("failed to save EXIF data: %w", err)
 	}
 
 	// Save photo file
+	fmt.Printf("Saving photo file to database...\n")
 	if err := s.photoRepo.SavePhotoFile(ctx, photoFile); err != nil {
 		return nil, fmt.Errorf("failed to save photo file: %w", err)
 	}
@@ -59,6 +84,10 @@ func (s *PhotoServiceImpl) ProcessPhoto(ctx context.Context, req entities.Upload
 		Message:  "Photo processed and saved successfully",
 		ExifData: *exifData,
 	}
+
+	fmt.Printf("Response EXIF Data:\n")
+	fmt.Printf("- Response Latitude: %v\n", response.ExifData.Latitude)
+	fmt.Printf("- Response Longitude: %v\n", response.ExifData.Longitude)
 
 	return response, nil
 }
