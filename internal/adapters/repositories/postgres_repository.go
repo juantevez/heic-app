@@ -1,4 +1,3 @@
-// internal/adapters/repositories/postgres_repository.go
 package repositories
 
 import (
@@ -7,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"heic-photo-processor/internal/domain/entities"
+	"github.com/juantevez/heic-app/internal/domain/entities"
 
 	_ "github.com/lib/pq"
 )

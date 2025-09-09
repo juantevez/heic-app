@@ -10,12 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	httpAdapter "heic-photo-processor/internal/adapters/http"
-	"heic-photo-processor/internal/adapters/http/handlers"
-	"heic-photo-processor/internal/adapters/repositories"
-	"heic-photo-processor/internal/adapters/services"
-	"heic-photo-processor/internal/config"
-	"heic-photo-processor/internal/domain/services"
+	httpAdapter "github.com/juantevez/heic-app/internal/adapters/http"
+	"github.com/juantevez/heic-app/internal/adapters/http/handlers"
+	"github.com/juantevez/heic-app/internal/adapters/repositories"
+	"github.com/juantevez/heic-app/internal/adapters/services"
+	"github.com/juantevez/heic-app/internal/config"
 )
 
 func main() {
@@ -96,7 +95,7 @@ func main() {
 // Application struct for dependency injection (alternative approach)
 type Application struct {
 	config       *config.Config
-	photoService *services.PhotoServiceImpl
+	photoService *domainServices.PhotoServiceImpl
 	photoHandler *handlers.PhotoHandler
 	server       *http.Server
 }

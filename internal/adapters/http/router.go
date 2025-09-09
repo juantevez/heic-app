@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"heic-photo-processor/internal/adapters/http/handlers"
+	"github.com/juantevez/heic-app/internal/adapters/http/handlers"
 
 	"github.com/gorilla/mux"
 )

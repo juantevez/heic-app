@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"heic-photo-processor/internal/domain/entities"
-	"heic-photo-processor/internal/domain/ports"
+	"github.com/juantevez/heic-app/internal/domain/entities"
+	"github.com/juantevez/heic-app/internal/domain/ports"
 
 	"github.com/gorilla/mux"
 )

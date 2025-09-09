@@ -1,4 +1,3 @@
-// internal/adapters/services/exif_extractor.go
 package services
 
 import (
@@ -7,10 +6,10 @@ import (
 	"strconv"
 	"strings"
 
-	"heic-photo-processor/internal/domain/entities"
+	"github.com/juantevez/heic-app/internal/domain/entities"
 
-	"github.com/adrium/goheif"
 	"github.com/dsoprea/go-exif/v3"
+	exifcommon "github.com/dsoprea/go-exif/v3/common"
 	"github.com/google/uuid"
 )
 
@@ -26,39 +25,77 @@ func (e *ExifExtractorServiceImpl) ExtractExif(fileData []byte, fileName string)
 		FileName: fileName,
 	}
 
-	// Try to extract EXIF data from HEIC file
-	exifData, err := e.extractFromHEIC(fileData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract EXIF from HEIC: %w", err)
+	// Verificar que es un archivo HEIC válido
+	if !e.isValidHEICFile(fileData) {
+		return nil, fmt.Errorf("invalid HEIC file format")
 	}
 
-	// Parse EXIF data
+	// Extraer EXIF data directamente del archivo HEIC
+	exifData, err := e.extractExifFromHEIC(fileData)
+	if err != nil {
+		// Si no se puede extraer EXIF, devolver estructura básica
+		fmt.Printf("Warning: Could not extract EXIF data: %v\n", err)
+		return photoExif, nil
+	}
+
+	// Parsear datos EXIF
 	if exifData != nil {
-		e.parseExifData(exifData, photoExif)
+		err := e.parseExifData(exifData, photoExif)
+		if err != nil {
+			fmt.Printf("Warning: Could not parse EXIF data: %v\n", err)
+		}
 	}
 
 	return photoExif, nil
 }
 
-func (e *ExifExtractorServiceImpl) extractFromHEIC(fileData []byte) ([]byte, error) {
-	reader := bytes.NewReader(fileData)
+func (e *ExifExtractorServiceImpl) extractExifFromHEIC(fileData []byte) ([]byte, error) {
+	// Buscar directamente el segmento EXIF en el archivo HEIC
+	// Los archivos HEIC pueden contener datos EXIF embebidos
 
-	// Decode HEIC to get access to metadata
-	img, err := goheif.Decode(reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode HEIC: %w", err)
-	}
-
-	// Try to extract EXIF from the decoded image
-	// Note: goheif might not expose EXIF directly, so we try alternative approach
-	reader.Seek(0, 0)
+	// Método 1: Usar go-exif para buscar y extraer EXIF
 	rawExif, err := exif.SearchAndExtractExif(fileData)
 	if err != nil {
-		// If direct EXIF extraction fails, try to extract from the image structure
-		return nil, fmt.Errorf("no EXIF data found in HEIC file: %w", err)
+		// Método 2: Buscar manualmente el marcador EXIF
+		return e.findExifInHEIC(fileData)
 	}
 
 	return rawExif, nil
+}
+
+func (e *ExifExtractorServiceImpl) findExifInHEIC(fileData []byte) ([]byte, error) {
+	// Buscar el marcador EXIF en el archivo HEIC
+	// Los archivos HEIC/HEIF pueden tener EXIF embebido en diferentes ubicaciones
+
+	// Buscar patrones comunes de EXIF
+	exifMarkers := [][]byte{
+		{0x45, 0x78, 0x69, 0x66}, // "Exif"
+		{0xFF, 0xE1},             // APP1 marker
+	}
+
+	for _, marker := range exifMarkers {
+		if idx := bytes.Index(fileData, marker); idx != -1 {
+			// Intentar extraer datos EXIF desde esta posición
+			if idx+8 < len(fileData) {
+				// Buscar el inicio de los datos TIFF
+				start := idx
+				for i := start; i < len(fileData)-4; i++ {
+					if (fileData[i] == 0x4D && fileData[i+1] == 0x4D) || // Big endian TIFF
+						(fileData[i] == 0x49 && fileData[i+1] == 0x49) { // Little endian TIFF
+						// Encontrado inicio de TIFF, extraer hasta el final probable
+						maxLen := 65536 // Máximo tamaño EXIF típico
+						end := i + maxLen
+						if end > len(fileData) {
+							end = len(fileData)
+						}
+						return fileData[i:end], nil
+					}
+				}
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("no EXIF data found in HEIC file")
 }
 
 func (e *ExifExtractorServiceImpl) parseExifData(rawExif []byte, photoExif *entities.PhotoExif) error {
@@ -73,7 +110,7 @@ func (e *ExifExtractorServiceImpl) parseExifData(rawExif []byte, photoExif *enti
 		return err
 	}
 
-	// Extract GPS coordinates
+	// Extraer coordenadas GPS
 	if gpsIfd, err := index.RootIfd.ChildWithIfdPath(exifcommon.IfdPathStandardGps); err == nil {
 		if lat, lon, err := gpsIfd.GpsInfo(); err == nil {
 			photoExif.Latitude = &lat
@@ -81,11 +118,12 @@ func (e *ExifExtractorServiceImpl) parseExifData(rawExif []byte, photoExif *enti
 		}
 	}
 
-	// Extract camera information and datetime
+	// Extraer información de cámara y datetime desde IFD0
 	if ifd0, err := index.RootIfd.ChildWithIfdPath(exifcommon.IfdPathStandardIfd0); err == nil {
 		e.extractCameraInfo(ifd0, photoExif)
 	}
 
+	// Extraer información adicional desde EXIF IFD
 	if exifIfd, err := index.RootIfd.ChildWithIfdPath(exifcommon.IfdPathStandardExif); err == nil {
 		e.extractExifInfo(exifIfd, photoExif)
 	}
@@ -101,19 +139,28 @@ func (e *ExifExtractorServiceImpl) extractCameraInfo(ifd *exif.Ifd, photoExif *e
 		case 0x010F: // Make
 			if value, err := entry.Value(); err == nil {
 				if maker, ok := value.(string); ok {
-					photoExif.CameraMaker = &maker
+					cleaned := strings.TrimSpace(strings.Trim(maker, "\x00"))
+					if cleaned != "" {
+						photoExif.CameraMaker = &cleaned
+					}
 				}
 			}
 		case 0x0110: // Model
 			if value, err := entry.Value(); err == nil {
 				if model, ok := value.(string); ok {
-					photoExif.CameraModel = &model
+					cleaned := strings.TrimSpace(strings.Trim(model, "\x00"))
+					if cleaned != "" {
+						photoExif.CameraModel = &cleaned
+					}
 				}
 			}
 		case 0x0132: // DateTime
 			if value, err := entry.Value(); err == nil {
 				if datetime, ok := value.(string); ok {
-					photoExif.DateTime = &datetime
+					cleaned := strings.TrimSpace(strings.Trim(datetime, "\x00"))
+					if cleaned != "" {
+						photoExif.DateTime = &cleaned
+					}
 				}
 			}
 		}
@@ -128,17 +175,59 @@ func (e *ExifExtractorServiceImpl) extractExifInfo(ifd *exif.Ifd, photoExif *ent
 		case 0x9003: // DateTimeOriginal
 			if value, err := entry.Value(); err == nil {
 				if datetime, ok := value.(string); ok {
-					// Prefer DateTimeOriginal over DateTime
-					photoExif.DateTime = &datetime
+					cleaned := strings.TrimSpace(strings.Trim(datetime, "\x00"))
+					if cleaned != "" {
+						// Preferir DateTimeOriginal sobre DateTime
+						photoExif.DateTime = &cleaned
+					}
+				}
+			}
+		case 0x9004: // DateTimeDigitized
+			if value, err := entry.Value(); err == nil && photoExif.DateTime == nil {
+				if datetime, ok := value.(string); ok {
+					cleaned := strings.TrimSpace(strings.Trim(datetime, "\x00"))
+					if cleaned != "" {
+						photoExif.DateTime = &cleaned
+					}
 				}
 			}
 		}
 	}
 }
 
-// Helper function to convert GPS coordinate from EXIF format
+func (e *ExifExtractorServiceImpl) isValidHEICFile(fileData []byte) bool {
+	if len(fileData) < 12 {
+		return false
+	}
+
+	// Verificar signature HEIC/HEIF
+	// Los archivos HEIC comienzan con un box 'ftyp'
+	if fileData[4] == 'f' && fileData[5] == 't' &&
+		fileData[6] == 'y' && fileData[7] == 'p' {
+
+		// Buscar brand HEIC, HEIF, mif1, etc.
+		brands := []string{"heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs", "mif1", "msf1"}
+
+		// Buscar en los primeros 32 bytes después del header ftyp
+		searchArea := fileData[8:]
+		if len(searchArea) > 32 {
+			searchArea = searchArea[:32]
+		}
+
+		content := strings.ToLower(string(searchArea))
+		for _, brand := range brands {
+			if strings.Contains(content, brand) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// Helper function para parsear coordenadas GPS (si se necesita implementación manual)
 func (e *ExifExtractorServiceImpl) parseGPSCoordinate(coordStr string, ref string) (float64, error) {
-	// Parse coordinates like "40/1,26/1,4630/100"
+	// Parse coordinates como "40/1,26/1,4630/100"
 	parts := strings.Split(coordStr, ",")
 	if len(parts) != 3 {
 		return 0, fmt.Errorf("invalid GPS coordinate format")
@@ -173,7 +262,7 @@ func (e *ExifExtractorServiceImpl) parseGPSCoordinate(coordStr string, ref strin
 		}
 	}
 
-	// Apply hemisphere reference
+	// Aplicar referencia de hemisferio
 	if ref == "S" || ref == "W" {
 		coord = -coord
 	}
