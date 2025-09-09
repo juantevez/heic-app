@@ -267,7 +267,8 @@ func (e *ExifExtractorServiceImpl) extractExifSubIfdInfo(rootIfd *exif.Ifd, phot
 	for _, entry := range entries {
 		if entry.TagId() == 0x8769 { // EXIF SubIFD pointer
 			// Buscar entre los children IFDs
-			for _, childIfd := range rootIfd.Children {
+			children := rootIfd.Children()
+			for _, childIfd := range children {
 				e.extractExifInfo(childIfd, photoExif)
 			}
 			break
