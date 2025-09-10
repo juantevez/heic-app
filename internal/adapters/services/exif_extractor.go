@@ -6,13 +6,17 @@ import (
 	"strings"
 
 	"github.com/juantevez/heic-app/internal/domain/entities"
-
-	"github.com/dsoprea/go-exif/v3"
+	"github.com/dsoprea/go-exif/v3"	
 	exifcommon "github.com/dsoprea/go-exif/v3/common"
 	"github.com/google/uuid"
 )
 
 type ExifExtractorServiceImpl struct{}
+
+
+// GPSCoordinate representa una coordenada GPS en formato [grados, minutos, segundos]
+type GPSCoordinate []exif.Rational
+
 
 func NewExifExtractorService() *ExifExtractorServiceImpl {
 	return &ExifExtractorServiceImpl{}
@@ -92,10 +96,8 @@ func (e *ExifExtractorServiceImpl) findExifInHEIC(fileData []byte) ([]byte, erro
 }
 
 func (e *ExifExtractorServiceImpl) parseExifData(rawExif []byte, photoExif *entities.PhotoExif) error {
-	im, err := exifcommon.NewIfdMappingWithStandard()
-	if err != nil {
-		return err
-	}
+	im := exif.NewStandardIfdMapping()
+
 
 	ti := exif.NewTagIndex()
 	_, index, err := exif.Collect(im, ti, rawExif)
@@ -152,7 +154,7 @@ func (e *ExifExtractorServiceImpl) exhaustiveGPSSearch(ifd *exif.Ifd, photoExif 
 
 	// Variables para almacenar datos GPS encontrados
 	var gpsLatRef, gpsLonRef string
-	var gpsLatCoords, gpsLonCoords []exifcommon.Rational
+	var gpsLatCoords, gpsLonCoords []exif.Rational
 	var foundGPSPointer bool
 
 	entries := ifd.Entries()
@@ -178,7 +180,7 @@ func (e *ExifExtractorServiceImpl) exhaustiveGPSSearch(ifd *exif.Ifd, photoExif 
 				fmt.Printf("*** GPS Latitude Ref found: %s\n", gpsLatRef)
 			}
 		case 0x0002: // GPSLatitude
-			if coords, ok := value.([]exifcommon.Rational); ok {
+			if coords, ok := value.([]exif.Rational); ok {
 				gpsLatCoords = coords
 				fmt.Printf("*** GPS Latitude coords found: %+v\n", coords)
 			}
@@ -188,7 +190,7 @@ func (e *ExifExtractorServiceImpl) exhaustiveGPSSearch(ifd *exif.Ifd, photoExif 
 				fmt.Printf("*** GPS Longitude Ref found: %s\n", gpsLonRef)
 			}
 		case 0x0004: // GPSLongitude
-			if coords, ok := value.([]exifcommon.Rational); ok {
+			if coords, ok := value.([]exif.Rational); ok {
 				gpsLonCoords = coords
 				fmt.Printf("*** GPS Longitude coords found: %+v\n", coords)
 			}
@@ -196,24 +198,30 @@ func (e *ExifExtractorServiceImpl) exhaustiveGPSSearch(ifd *exif.Ifd, photoExif 
 			foundGPSPointer = true
 			fmt.Printf("*** GPS SubIFD pointer found: %+v\n", value)
 
-			// Intentar procesar el offset directamente
-			if offset, ok := value.(uint32); ok {
-				fmt.Printf("*** GPS SubIFD offset: %d (0x%X)\n", offset, offset)
-			} else if offset, ok := value.([]uint32); ok && len(offset) > 0 {
-				fmt.Printf("*** GPS SubIFD offset array: %v\n", offset)
+			// Procesar el offset y seguir al SubIFD
+			var offset uint32
+			if off, ok := value.(uint32); ok {
+				offset = off
+			} else if offs, ok := value.([]uint32); ok && len(offs) > 0 {
+				offset = offs[0] // Tomamos el primer offset
+				fmt.Printf("*** Using first GPS SubIFD offset: %d\n", offset)
 			}
-		}
+
+			if offset > 0 {
+			// Extraer GPS del SubIFD
+				e.extractGPSFromSubIFD(*index, offset, photoExif)
+			}
 	}
 
 	// Procesar coordenadas GPS si se encontraron EN ESTE IFD
 	if len(gpsLatCoords) >= 3 && len(gpsLonCoords) >= 3 {
-		lat := e.convertGPSCoordinates(gpsLatCoords)
+		lat := GPSCoordinate(gpsLatCoords).ToDecimal()
 		if gpsLatRef == "S" {
 			lat = -lat
 		}
 		photoExif.Latitude = &lat
 
-		lon := e.convertGPSCoordinates(gpsLonCoords)
+		lon := GPSCoordinate(gpsLonCoords).ToDecimal()
 		if gpsLonRef == "W" {
 			lon = -lon
 		}
@@ -221,8 +229,6 @@ func (e *ExifExtractorServiceImpl) exhaustiveGPSSearch(ifd *exif.Ifd, photoExif 
 
 		fmt.Printf("*** FINAL GPS Latitude: %f\n", lat)
 		fmt.Printf("*** FINAL GPS Longitude: %f\n", lon)
-		fmt.Printf("*** GPS SUCCESSFULLY EXTRACTED FROM ROOT IFD\n")
-		return
 	}
 
 	// Si encontramos el pointer pero no las coordenadas en este IFD
@@ -242,20 +248,19 @@ func (e *ExifExtractorServiceImpl) exhaustiveGPSSearch(ifd *exif.Ifd, photoExif 
 	}
 }
 
-func (e *ExifExtractorServiceImpl) convertGPSCoordinates(coords []exifcommon.Rational) float64 {
-	if len(coords) < 3 {
-		return 0
+// ToDecimal convierte la coordenada a grados decimales
+func (g GPSCoordinate) ToDecimal() float64 {
+	if len(g) < 3 {
+		return 0.0
 	}
 
-	// Convertir grados, minutos, segundos a decimal
-	degrees := float64(coords[0].Numerator) / float64(coords[0].Denominator)
-	minutes := float64(coords[1].Numerator) / float64(coords[1].Denominator)
-	seconds := float64(coords[2].Numerator) / float64(coords[2].Denominator)
+	degrees := float64(g[0].Numerator) / float64(g[0].Denominator)
+	minutes := float64(g[1].Numerator) / float64(g[1].Denominator)
+	seconds := float64(g[2].Numerator) / float64(g[2].Denominator)
 
 	fmt.Printf("GPS Conversion - Degrees: %f, Minutes: %f, Seconds: %f\n", degrees, minutes, seconds)
 
-	decimal := degrees + (minutes / 60.0) + (seconds / 3600.0)
-	return decimal
+	return degrees + minutes/60.0 + seconds/3600.0
 }
 
 func (e *ExifExtractorServiceImpl) extractCameraInfo(ifd *exif.Ifd, photoExif *entities.PhotoExif) {
@@ -330,4 +335,82 @@ func (e *ExifExtractorServiceImpl) isValidHEICFile(fileData []byte) bool {
 	}
 
 	return false
+}
+
+func (e *ExifExtractorServiceImpl) extractGPSFromSubIFD(index exif.IfdIndex, offset uint32, photoExif *entities.PhotoExif) {
+	fmt.Printf("=== Extracting GPS from SubIFD at offset %d ===\n", offset)
+
+	// Crear el path al SubIFD usando el offset
+	gpsIfd, err := index.RootIfd.ChildWithIfdPath([]uint32{offset})
+	if err != nil {
+		fmt.Printf("Error accessing GPS SubIFD at offset %d: %v\n", offset, err)
+		return
+	}
+
+	if gpsIfd == nil {
+		fmt.Printf("GPS SubIFD at offset %d is nil\n", offset)
+		return
+	}
+
+	fmt.Printf("Successfully accessed GPS SubIFD at offset %d\n", offset)
+
+	// Ahora extraer los tags GPS de este SubIFD
+	var gpsLatRef, gpsLonRef string
+	var gpsLatCoords, gpsLonCoords []exif.Rational
+
+	entries := gpsIfd.Entries()
+	fmt.Printf("Found %d entries in GPS SubIFD\n", len(entries))
+
+	for _, entry := range entries {
+		tagId := entry.TagId()
+		value, err := entry.Value()
+		if err != nil {
+			continue
+		}
+
+		fmt.Printf("GPS SubIFD Entry: 0x%04X = %+v (type: %T)\n", tagId, value, value)
+
+		switch tagId {
+		case 0x0001: // GPSLatitudeRef
+			if str, ok := value.(string); ok {
+				gpsLatRef = strings.TrimSpace(str)
+				fmt.Printf("*** GPS Latitude Ref found in SubIFD: %s\n", gpsLatRef)
+			}
+		case 0x0002: // GPSLatitude
+			if coords, ok := value.([]exif.Rational); ok {
+				gpsLatCoords = coords
+				fmt.Printf("*** GPS Latitude coords found in SubIFD: %+v\n", coords)
+			}
+		case 0x0003: // GPSLongitudeRef
+			if str, ok := value.(string); ok {
+				gpsLonRef = strings.TrimSpace(str)
+				fmt.Printf("*** GPS Longitude Ref found in SubIFD: %s\n", gpsLonRef)
+			}
+		case 0x0004: // GPSLongitude
+			if coords, ok := value.([]exif.Rational); ok {
+				gpsLonCoords = coords
+				fmt.Printf("*** GPS Longitude coords found in SubIFD: %+v\n", coords)
+			}
+		}
+	}
+
+	// Procesar coordenadas si están completas
+	if len(gpsLatCoords) >= 3 && len(gpsLonCoords) >= 3 {
+		lat := GPSCoordinate(gpsLatCoords).ToDecimal()
+		if gpsLatRef == "S" {
+			lat = -lat
+		}
+		photoExif.Latitude = &lat
+
+		lon := GPSCoordinate(gpsLonCoords).ToDecimal()
+		if gpsLonRef == "W" {
+			lon = -lon
+		}
+		photoExif.Longitude = &lon
+
+		fmt.Printf("*** FINAL GPS Latitude: %f\n", lat)
+		fmt.Printf("*** FINAL GPS Longitude: %f\n", lon)
+	} else {
+		fmt.Printf("*** Incomplete GPS data in SubIFD\n")
+	}
 }
