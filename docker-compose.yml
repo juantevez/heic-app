@@ -5,15 +5,15 @@ services:
   app:
     build: .
     ports:
-      - "8080:8080"
+      - "8090:8090"
     environment:
-      - SERVER_PORT=8080
+      - SERVER_PORT=8090
       - SERVER_HOST=0.0.0.0
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_USER=postgres
-      - DB_PASSWORD=photopass123
-      - DB_NAME=photo_db
+      - DB_USER=juant
+      - DB_PASSWORD=loki2019
+      - DB_NAME=safebike
       - DB_SSLMODE=disable
     depends_on:
       postgres:
