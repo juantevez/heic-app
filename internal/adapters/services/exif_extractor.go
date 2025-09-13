@@ -5,18 +5,16 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/juantevez/heic-app/internal/domain/entities"
-	"github.com/dsoprea/go-exif/v3"	
+	"github.com/dsoprea/go-exif/v3"
 	exifcommon "github.com/dsoprea/go-exif/v3/common"
 	"github.com/google/uuid"
+	"github.com/juantevez/heic-app/internal/domain/entities"
 )
 
 type ExifExtractorServiceImpl struct{}
 
-
 // GPSCoordinate representa una coordenada GPS en formato [grados, minutos, segundos]
 type GPSCoordinate []exifcommon.Rational
-
 
 func NewExifExtractorService() *ExifExtractorServiceImpl {
 	return &ExifExtractorServiceImpl{}
@@ -96,8 +94,8 @@ func (e *ExifExtractorServiceImpl) findExifInHEIC(fileData []byte) ([]byte, erro
 }
 
 func (e *ExifExtractorServiceImpl) parseExifData(rawExif []byte, photoExif *entities.PhotoExif) error {
-	im := exif.NewStandardIfdMapping()
-
+	// CORRECTO: Usar NewIfdMappingWithStandard()
+	im, _ := exifcommon.NewIfdMappingWithStandard()
 
 	ti := exif.NewTagIndex()
 	_, index, err := exif.Collect(im, ti, rawExif)
@@ -108,7 +106,7 @@ func (e *ExifExtractorServiceImpl) parseExifData(rawExif []byte, photoExif *enti
 	fmt.Printf("=== EXIF Parsing Started ===\n")
 
 	// MÉTODO 1: Intentar acceso directo a GPS usando la librería
-	e.tryDirectGPSExtraction(index, photoExif)
+	e.tryDirectGPSExtraction(&index, photoExif)
 
 	// MÉTODO 2: Extraer información del Root IFD
 	if rootIfd := index.RootIfd; rootIfd != nil {
@@ -118,7 +116,7 @@ func (e *ExifExtractorServiceImpl) parseExifData(rawExif []byte, photoExif *enti
 		e.extractCameraInfo(rootIfd, photoExif)
 
 		// Búsqueda exhaustiva de GPS en TODAS las entradas
-		e.exhaustiveGPSSearch(rootIfd, photoExif)
+		e.exhaustiveGPSSearch(&index, rootIfd, photoExif)
 	}
 
 	fmt.Printf("=== EXIF Parsing Completed ===\n")
@@ -127,7 +125,7 @@ func (e *ExifExtractorServiceImpl) parseExifData(rawExif []byte, photoExif *enti
 	return nil
 }
 
-func (e *ExifExtractorServiceImpl) tryDirectGPSExtraction(index exif.IfdIndex, photoExif *entities.PhotoExif) {
+func (e *ExifExtractorServiceImpl) tryDirectGPSExtraction(index *exif.IfdIndex, photoExif *entities.PhotoExif) {
 	fmt.Printf("=== Trying Direct GPS Extraction ===\n")
 
 	// Intentar obtener GPS info directamente del RootIfd
@@ -149,7 +147,7 @@ func (e *ExifExtractorServiceImpl) tryDirectGPSExtraction(index exif.IfdIndex, p
 	fmt.Printf("Proceeding to exhaustive GPS search...\n")
 }
 
-func (e *ExifExtractorServiceImpl) exhaustiveGPSSearch(ifd *exif.Ifd, photoExif *entities.PhotoExif) {
+func (e *ExifExtractorServiceImpl) exhaustiveGPSSearch(index *exif.IfdIndex, ifd *exif.Ifd, photoExif *entities.PhotoExif) {
 	fmt.Printf("=== Exhaustive GPS Search ===\n")
 
 	// Variables para almacenar datos GPS encontrados
@@ -208,9 +206,10 @@ func (e *ExifExtractorServiceImpl) exhaustiveGPSSearch(ifd *exif.Ifd, photoExif 
 			}
 
 			if offset > 0 {
-			// Extraer GPS del SubIFD
-				e.extractGPSFromSubIFD(*index, offset, photoExif)
+				// Extraer GPS del SubIFD
+				e.extractGPSFromSubIFD(index, photoExif)
 			}
+		}
 	}
 
 	// Procesar coordenadas GPS si se encontraron EN ESTE IFD
@@ -243,24 +242,24 @@ func (e *ExifExtractorServiceImpl) exhaustiveGPSSearch(ifd *exif.Ifd, photoExif 
 	// Intentar último método: verificar si tenemos GPS parcial
 	if len(gpsLatCoords) > 0 || len(gpsLonCoords) > 0 || gpsLatRef != "" || gpsLonRef != "" {
 		fmt.Printf("*** Partial GPS data found:\n")
-		fmt.Printf("    Lat Ref: %s, Lat Coords: %v\n", gpsLatRef, gpsLatCoords)
-		fmt.Printf("    Lon Ref: %s, Lon Coords: %v\n", gpsLonRef, gpsLonCoords)
+		fmt.Printf("    Lat Ref: %s, Lat Coords: %v\n", gpsLatRef, gpsLatCoords)
+		fmt.Printf("    Lon Ref: %s, Lon Coords: %v\n", gpsLonRef, gpsLonCoords)
 	}
 }
 
 // ToDecimal convierte la coordenada a grados decimales
 func (g GPSCoordinate) ToDecimal() float64 {
-    if len(g) < 3 {
-        return 0.0
-    }
+	if len(g) < 3 {
+		return 0.0
+	}
 
-    degrees := float64(g[0].Numerator) / float64(g[0].Denominator)
-    minutes := float64(g[1].Numerator) / float64(g[1].Denominator) 
-    seconds := float64(g[2].Numerator) / float64(g[2].Denominator)
+	degrees := float64(g[0].Numerator) / float64(g[0].Denominator)
+	minutes := float64(g[1].Numerator) / float64(g[1].Denominator)
+	seconds := float64(g[2].Numerator) / float64(g[2].Denominator)
 
-    fmt.Printf("GPS Conversion - Degrees: %f, Minutes: %f, Seconds: %f\n", degrees, minutes, seconds)
+	fmt.Printf("GPS Conversion - Degrees: %f, Minutes: %f, Seconds: %f\n", degrees, minutes, seconds)
 
-    return degrees + minutes/60.0 + seconds/3600.0
+	return degrees + minutes/60.0 + seconds/3600.0
 }
 
 func (e *ExifExtractorServiceImpl) extractCameraInfo(ifd *exif.Ifd, photoExif *entities.PhotoExif) {
@@ -337,23 +336,19 @@ func (e *ExifExtractorServiceImpl) isValidHEICFile(fileData []byte) bool {
 	return false
 }
 
-//func (e *ExifExtractorServiceImpl) extractGPSFromSubIFD(index exif.IfdIndex, offset uint32, photoExif *entities.PhotoExif) {
-func (e *ExifExtractorServiceImpl) extractGPSFromSubIFD(index *exif.IfdIndex, offset uint32, photoExif *entities.PhotoExif) {
-	fmt.Printf("=== Extracting GPS from SubIFD at offset %d ===\n", offset)
+// extractGPSFromSubIFD accede al IFD de GPS directamente desde el índice.
 
-	// Crear el path al SubIFD usando el offset
-	gpsIfd, err := index.RootIfd.ChildWithIfdPath([]uint32{offset})
-	if err != nil {
-		fmt.Printf("Error accessing GPS SubIFD at offset %d: %v\n", offset, err)
+func (e *ExifExtractorServiceImpl) extractGPSFromSubIFD(index *exif.IfdIndex, photoExif *entities.PhotoExif) {
+	fmt.Printf("=== Extracting GPS from GpsIfd field ===\n")
+
+	// Usar la identidad de GPS para buscar el IFD en el mapa de Lookup.
+	gpsIfd, found := index.Lookup[exifcommon.IfdGpsInfoStandardIfdIdentity.String()]
+	if !found {
+		fmt.Printf("GpsIfd is nil, no GPS data found.\n")
 		return
 	}
 
-	if gpsIfd == nil {
-		fmt.Printf("GPS SubIFD at offset %d is nil\n", offset)
-		return
-	}
-
-	fmt.Printf("Successfully accessed GPS SubIFD at offset %d\n", offset)
+	fmt.Printf("Successfully accessed GPS SubIFD\n")
 
 	// Ahora extraer los tags GPS de este SubIFD
 	var gpsLatRef, gpsLonRef string
